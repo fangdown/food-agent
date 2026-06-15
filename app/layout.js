@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "美食搭配小助手",
-  description: "真实大模型菜品搭配 Agent Demo"
+  title: "智能食谱助手",
+  description: "大模型菜品搭配 Agent Demo"
 };
 
 export default function RootLayout({ children }) {

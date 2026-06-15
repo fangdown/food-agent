@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runEatAgentStream } from "../../../lib/agent";
+import { runFoodAgentStream } from "../../../lib/agent";
 
 function getSafeErrorMessage(error) {
   const message = error.message || "请求失败";
@@ -11,16 +11,25 @@ function getSafeErrorMessage(error) {
     message.includes("API key") ||
     message.includes("Incorrect API key")
   ) {
-    return "OpenAI 鉴权失败，请检查 OPENAI_API_KEY 和 OPENAI_BASE_URL";
+    return "模型鉴权失败，请检查 OPENROUTER_API_KEY / OPENAI_API_KEY 和 BASE_URL";
   }
 
-  return message;
+  if (message.includes("公开 API 请求失败") || message.includes("公开 API 请求超时")) {
+    return "公开菜谱数据暂时不可用，请稍后重试";
+  }
+
+  if (message.includes("工具参数解析失败")) {
+    return "模型工具调用参数异常，请重试";
+  }
+
+  return "请求失败，请稍后重试";
 }
 
 export async function POST(request) {
   try {
     const body = await request.json();
     const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const cardContext = typeof body?.cardContext === "string" ? body.cardContext.trim() : "";
     const fallbackMessage = body?.message?.trim();
     const inputMessages = messages.length > 0 ? messages : [{ role: "user", content: fallbackMessage }];
     const latestMessage = inputMessages.at(-1)?.content?.trim();
@@ -38,12 +47,16 @@ export async function POST(request) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          await runEatAgentStream(inputMessages, {
-            onCards: (cards) => send(controller, "cards", { cards }),
-            onTrace: (trace) => send(controller, "trace", trace),
-            onDelta: (delta) => send(controller, "delta", { delta }),
-            onDone: () => send(controller, "done", {})
-          });
+          await runFoodAgentStream(
+            inputMessages,
+            {
+              onCards: (cards) => send(controller, "cards", { cards }),
+              onTrace: (trace) => send(controller, "trace", trace),
+              onDelta: (delta) => send(controller, "delta", { delta }),
+              onDone: () => send(controller, "done", {})
+            },
+            { cardContext }
+          );
         } catch (error) {
           send(controller, "error", { error: getSafeErrorMessage(error) });
         } finally {

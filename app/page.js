@@ -5,18 +5,22 @@ import ReactMarkdown from "react-markdown";
 import { useEffect, useRef, useState } from "react";
 
 const examples = [
-  "给我推荐一顿晚餐",
-  "看看第一个菜谱详情",
-  "推荐一杯 margarita"
+  "我想吃素食，推荐菜谱和饮品",
+  "给我推荐一份晚餐",
+  "看看第一个菜谱详情"
 ];
 
-function ThinkingIndicator({ text = "思考中..." }) {
+function ThinkingIndicator({ text = "思考中" }) {
   return (
     <span className="thinking">
       {text}
       <span className="thinkingDots" aria-hidden="true" />
     </span>
   );
+}
+
+function getPendingText(message) {
+  return message.statusText || "思考中";
 }
 
 function MarkdownMessage({ content }) {
@@ -46,6 +50,23 @@ function ResultCards({ cards, onImageLoad }) {
               />
             </div>
           )}
+          <div className="resultInfo">
+            <div className="resultMeta">
+              <span>{card.source}</span>
+              {(card.area || card.category || card.glass) && (
+                <span>{[card.area, card.category || card.glass].filter(Boolean).join(" / ")}</span>
+              )}
+            </div>
+            <strong>{card.title}</strong>
+            {card.ingredients?.length > 0 && (
+              <p>
+                {card.ingredients
+                  .slice(0, 5)
+                  .map((ingredient) => ingredient.name)
+                  .join("、")}
+              </p>
+            )}
+          </div>
         </article>
       ))}
     </div>
@@ -67,6 +88,60 @@ function getCardsMentionedInAnswer(items, answer) {
   return matched.length > 0 ? matched : items;
 }
 
+function sortCardsForDisplay(items) {
+  const order = { meal: 0, cocktail: 1 };
+  return [...items].sort((left, right) => (order[left.type] ?? 2) - (order[right.type] ?? 2));
+}
+
+function getTraceView(trace) {
+  const names = {
+    search_meals: "搜索菜谱",
+    get_meal_detail: "获取菜谱详情",
+    search_cocktails: "搜索饮品"
+  };
+  const args = trace.arguments || {};
+  const parts = [
+    args.mode ? `模式：${args.mode}` : "",
+    args.query ? `关键词：${args.query}` : "",
+    args.id ? `ID：${args.id}` : ""
+  ].filter(Boolean);
+
+  return {
+    title: names[trace.tool] || trace.tool,
+    detail: parts.join("，"),
+    summary: trace.result?.summary || "工具调用完成"
+  };
+}
+
+function ToolTrace({ traces, pending }) {
+  if (!traces?.length) return null;
+
+  const views = traces.map(getTraceView);
+  const titles = [...new Set(views.map((view) => view.title))];
+  const activeSummary = titles.length > 3
+    ? `调用 ${traces.length} 个工具：${titles.slice(0, 3).join(" → ")}…`
+    : `调用工具：${titles.join(" → ")}`;
+  const summary = pending ? activeSummary : "工具调用详情";
+
+  return (
+    <details className="toolTrace">
+      <summary>{summary}</summary>
+      <div className="toolTraceBody">
+        {views.map((view, index) => (
+          <div className="toolStep" key={`${view.title}-${index}`}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{view.title}</strong>
+              {view.detail && <p>{view.detail}</p>}
+              <small>{view.summary}</small>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function Home() {
   const messagesRef = useRef(null);
   const bottomRef = useRef(null);
@@ -76,10 +151,9 @@ export default function Home() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "告诉我想吃什么，我会搜索真实菜谱和饮品搭配。"
+      content: "告诉我想吃什么，我会搜索菜谱和饮品搭配。"
     }
   ]);
-  const [traces, setTraces] = useState([]);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -139,7 +213,11 @@ export default function Home() {
       const dataLine = lines.find((line) => line.startsWith("data: "));
       if (!event || !dataLine) continue;
 
-      onEvent(event, JSON.parse(dataLine.slice(6)));
+      try {
+        onEvent(event, JSON.parse(dataLine.slice(6)));
+      } catch {
+        onEvent("error", { error: "响应解析失败，请稍后重试" });
+      }
     }
 
     return rest;
@@ -152,7 +230,6 @@ export default function Home() {
     setInput("");
     setError("");
     setLoading(true);
-    setTraces([]);
     setCards([]);
     stickToBottomRef.current = true;
     autoFollowRef.current = true;
@@ -165,7 +242,6 @@ export default function Home() {
     ];
     const requestMessages = [
       ...messages,
-      ...(cardContext ? [{ role: "assistant", content: cardContext }] : []),
       { role: "user", content: message }
     ];
     setMessages(visibleMessages);
@@ -177,13 +253,18 @@ export default function Home() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          messages: requestMessages.map(({ role, content }) => ({ role, content }))
+          messages: requestMessages.map(({ role, content }) => ({ role, content })),
+          cardContext
         })
       });
 
       if (!response.ok) {
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "请求失败");
+      }
+
+      if (!response.body) {
+        throw new Error("响应为空，请稍后重试");
       }
 
       const reader = response.body.getReader();
@@ -220,13 +301,29 @@ export default function Home() {
         buffer += decoder.decode(value, { stream: true });
         buffer = readSseEvents(buffer, (event, data) => {
           if (event === "trace") {
-            setTraces((current) => [...current, data]);
+            setMessages((current) =>
+              current.map((item, index) =>
+                index === assistantIndex
+                  ? {
+                      ...item,
+                      traces: [...(item.traces || []), data]
+                    }
+                  : item
+              )
+            );
           }
 
           if (event === "cards") {
             const seen = new Set(pendingCards.map((card) => `${card.type}-${card.id}`));
             const incoming = data.cards.filter((card) => !seen.has(`${card.type}-${card.id}`));
             pendingCards = [...pendingCards, ...incoming];
+            setMessages((current) =>
+              current.map((item, index) =>
+                index === assistantIndex && item.pending
+                  ? { ...item, statusText: "整理结果中" }
+                  : item
+              )
+            );
           }
 
           if (event === "delta") {
@@ -254,7 +351,7 @@ export default function Home() {
       }
 
       if (pendingCards.length > 0) {
-        const visibleCards = getCardsMentionedInAnswer(pendingCards, assistantText);
+        const visibleCards = sortCardsForDisplay(getCardsMentionedInAnswer(pendingCards, assistantText));
         setCards(visibleCards);
         setMessages((current) =>
           current.map((item, index) =>
@@ -292,85 +389,55 @@ export default function Home() {
     <main className="page">
       <section className="shell">
         <div className="header">
-          <div>
-            <h1>美食搭配小助手</h1>
+          <div className="titleMark">
+            <span aria-hidden="true" />
+            <h1>智能食谱助手</h1>
           </div>
         </div>
 
-        <div className="workspace">
-          <section className="chatPanel">
-            <div className="panelTitle">
-              <h2>菜品搭配</h2>
-            </div>
-
-            <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
-              {messages.map((message, index) => (
-                <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                  {message.pending ? <ThinkingIndicator /> : <MarkdownMessage content={message.content} />}
-                  <ResultCards cards={message.cards} onImageLoad={handleResultImageLoad} />
-                </div>
-              ))}
-              {showScrollButton && (
-                <button
-                  aria-label="回到最新消息"
-                  className="scrollLatest"
-                  type="button"
-                  onClick={() => scrollToLatest()}
-                >
-                  ↓
-                </button>
-              )}
-              <div ref={bottomRef} />
-            </div>
-
-            {error && <div className="error">{error}</div>}
-
-            <div className="examples">
-              {examples.map((example) => (
-                <button key={example} type="button" onClick={() => sendMessage(example)}>
-                  {example}
-                </button>
-              ))}
-            </div>
-
-            <form className="composer" onSubmit={handleSubmit}>
-              <input
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder="例如：我今晚吃红烧肉，配什么菜和饮料？"
-              />
-              <button type="submit" disabled={loading}>
-                发送
+        <section className="chatPanel">
+          <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
+            {messages.map((message, index) => (
+              <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
+                <ToolTrace traces={message.traces} pending={message.pending} />
+                {message.pending ? <ThinkingIndicator text={getPendingText(message)} /> : <MarkdownMessage content={message.content} />}
+                <ResultCards cards={message.cards} onImageLoad={handleResultImageLoad} />
+              </div>
+            ))}
+            {showScrollButton && (
+              <button
+                aria-label="回到最新消息"
+                className="scrollLatest"
+                type="button"
+                onClick={() => scrollToLatest()}
+              >
+                ↓
               </button>
-            </form>
-          </section>
-
-          <aside className="tracePanel">
-            <div className="traceHeader">
-              <h2>执行轨迹</h2>
-            </div>
-
-            {traces.length === 0 ? (
-              <div className="emptyTrace">
-                <strong>等待调用</strong>
-                <p>发送消息后，这里会显示模型选择的工具、参数和执行结果。</p>
-              </div>
-            ) : (
-              <div className="traceList">
-                {traces.map((trace, index) => (
-                  <div className="traceItem" key={`${trace.tool}-${index}`}>
-                    <div className="traceTop">
-                      <span>{index + 1}</span>
-                      <strong>{trace.tool}</strong>
-                    </div>
-                    <pre>{JSON.stringify(trace.arguments, null, 2)}</pre>
-                    <p>{trace.result?.summary}</p>
-                  </div>
-                ))}
-              </div>
             )}
-          </aside>
-        </div>
+            <div ref={bottomRef} />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
+          <div className="examples">
+            {examples.map((example) => (
+              <button key={example} type="button" onClick={() => sendMessage(example)}>
+                {example}
+              </button>
+            ))}
+          </div>
+
+          <form className="composer" onSubmit={handleSubmit}>
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="我今晚想吃鸡"
+            />
+            <button type="submit" disabled={loading || !input.trim()} aria-label="发送">
+              ↑
+            </button>
+          </form>
+        </section>
       </section>
     </main>
   );
