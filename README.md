@@ -1,6 +1,6 @@
 # 美食搭配小助手
 
-真实大模型菜品搭配 Agent Demo。用户输入想吃的菜，系统调用 OpenAI 模型，由模型选择工具，服务端执行工具，最后返回配菜和饮料搭配。
+真实大模型智能食谱 Agent Demo。用户输入想吃的菜，系统调用 OpenAI 兼容模型，由模型选择工具搜索 TheMealDB / TheCocktailDB，最后返回菜谱、食材、步骤摘要和配饮建议。
 
 ## 技术栈
 
@@ -21,8 +21,8 @@ eat-agent/
   lib/
     agent.js
     tools.js
-  docs/superpowers/plans/
-    2026-06-14-eat-agent.md
+  docs/
+    reverse-engineering-prompt.md
   .env.example
   package.json
   README.md
@@ -65,24 +65,26 @@ lib/agent.js
   ↓
 OpenAI Responses API
   ↓
+TheMealDB / TheCocktailDB
+  ↑
 lib/tools.js
   ↓
 OpenAI Responses API
   ↓
-SSE: trace / delta / done
+SSE: trace / cards / delta / done
   ↓
 app/page.js 实时渲染
 ```
 
 ## 大模型调用流程
 
-一次完整请求通常调用大模型 5 次：
+一次完整请求通常调用大模型多次：
 
 ```txt
-1. 判断调用 analyze_dish
-2. 判断调用 recommend_side_dishes
-3. 判断调用 recommend_drinks
-4. 判断调用 check_nutrition_balance
+1. 根据用户输入判断调用 search_meals / get_meal_detail / search_cocktails
+2. 后端执行工具并调用公开 API
+3. 把工具结果回传给大模型
+4. 大模型可继续调用下一个工具
 5. 结合工具结果，流式生成最终回答
 ```
 

@@ -6,9 +6,9 @@
   --panel-strong: #ffffff;
   --line: #d9e0e7;
   --soft-line: #e7ecf1;
-  --accent: #067a46;
-  --accent-dark: #045c35;
-  --accent-soft: #e5f4ec;
+  --accent: #4b5563;
+  --accent-dark: #374151;
+  --accent-soft: #eef0f3;
   --code: #101820;
   --danger: #b42318;
 }
@@ -51,7 +51,7 @@ button:active {
 
 .page {
   min-height: 100dvh;
-  padding: 28px;
+  padding: 18px 24px;
 }
 
 .shell {
@@ -60,12 +60,12 @@ button:active {
 }
 
 .header {
-  min-height: 116px;
+  min-height: 74px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 24px;
   align-items: end;
-  padding: 8px 0 22px;
+  padding: 0 0 14px;
 }
 
 h1,
@@ -75,8 +75,8 @@ p {
 }
 
 h1 {
-  font-size: clamp(44px, 7vw, 92px);
-  line-height: 0.92;
+  font-size: clamp(34px, 4.8vw, 58px);
+  line-height: 0.96;
   letter-spacing: 0;
 }
 
@@ -133,9 +133,11 @@ h2 {
 }
 
 .chatPanel {
-  min-height: 680px;
+  height: calc(100dvh - 124px);
+  min-height: min(560px, calc(100dvh - 124px));
   display: flex;
   flex-direction: column;
+  position: relative;
   overflow: hidden;
 }
 
@@ -160,11 +162,12 @@ h2 {
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 20px;
+  padding: 20px 20px 28px;
 }
 
 .message {
@@ -175,33 +178,100 @@ h2 {
   border: 1px solid var(--soft-line);
 }
 
-.message p {
-  white-space: pre-wrap;
+.message:has(.cards) {
+  width: min(100%, 760px);
+}
+
+.markdown {
   line-height: 1.72;
 }
 
-.cursor {
-  display: inline-block;
-  width: 7px;
-  height: 1em;
-  margin-left: 3px;
-  vertical-align: -0.15em;
-  border-radius: 999px;
-  background: var(--accent);
-  animation: blink 1s steps(2, start) infinite;
+.markdown > :first-child {
+  margin-top: 0;
 }
 
-@keyframes blink {
-  to {
-    opacity: 0;
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol {
+  margin: 0 0 10px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 20px;
+}
+
+.markdown li {
+  margin: 4px 0;
+}
+
+.markdown strong {
+  font-weight: 850;
+}
+
+.markdown code {
+  border-radius: 6px;
+  padding: 2px 5px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-size: 0.92em;
+}
+
+.thinking {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 750;
+  animation: thinkingFade 1.2s ease-in-out infinite;
+}
+
+.thinkingDots::after {
+  content: "";
+  display: inline-block;
+  width: 1.4em;
+  text-align: left;
+  animation: thinkingDots 1.2s steps(4, end) infinite;
+}
+
+@keyframes thinkingFade {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes thinkingDots {
+  0% {
+    content: "";
+  }
+
+  25% {
+    content: ".";
+  }
+
+  50% {
+    content: "..";
+  }
+
+  75%,
+  100% {
+    content: "...";
   }
 }
 
 .message.user {
   align-self: flex-end;
-  background: var(--ink);
-  color: #fff;
-  border-color: var(--ink);
+  background: #f1f2f4;
+  color: var(--ink);
+  border-color: #eceff3;
 }
 
 .message.assistant {
@@ -209,12 +279,94 @@ h2 {
   background: var(--panel-strong);
 }
 
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.cardsSingle {
+  grid-template-columns: minmax(0, 440px);
+  justify-content: center;
+}
+
+.resultCard {
+  overflow: hidden;
+  border: 1px solid var(--soft-line);
+  border-radius: 16px;
+  background: #f8fafc;
+  box-shadow: 0 12px 30px rgba(16, 24, 40, 0.08);
+}
+
+.resultImage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(75, 85, 99, 0.12), transparent 34%),
+    #f3f4f6;
+}
+
+.resultImage img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  padding: 10px;
+}
+
+.cardsSingle .resultImage {
+  aspect-ratio: auto;
+  background: #f8fafc;
+}
+
+.cardsSingle .resultImage img {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 300px;
+  padding: 0;
+  border-radius: 12px;
+}
+
 .examples {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   border-top: 1px solid var(--soft-line);
+  margin-top: auto;
   padding: 14px 20px 0;
+  background: rgba(251, 252, 253, 0.96);
+}
+
+.scrollLatest {
+  position: sticky;
+  bottom: 12px;
+  align-self: center;
+  flex: 0 0 34px;
+  z-index: 2;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--soft-line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 18px rgba(16, 24, 40, 0.12);
+  transform: none;
+}
+
+.scrollLatest:active {
+  transform: translateY(1px);
 }
 
 .examples button,
@@ -226,15 +378,16 @@ h2 {
 }
 
 .examples button {
-  border: 1px solid var(--line);
+  border: 1px solid #e2e7ee;
   padding: 9px 13px;
-  background: var(--panel-strong);
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  color: #4b5563;
 }
 
 .examples button:hover {
-  border-color: var(--accent);
-  color: var(--accent-dark);
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: var(--ink);
 }
 
 .composer {
@@ -242,6 +395,7 @@ h2 {
   grid-template-columns: 1fr auto;
   gap: 10px;
   padding: 14px 20px 20px;
+  background: rgba(251, 252, 253, 0.96);
 }
 
 .composer input {
@@ -265,14 +419,14 @@ h2 {
 
 .composer button {
   min-width: 88px;
-  border: 1px solid var(--accent-dark);
+  border: 1px solid #d5dbe3;
   padding: 0 20px;
-  background: var(--accent);
-  color: #fff;
+  background: #eef1f5;
+  color: #374151;
 }
 
 .composer button:hover {
-  background: var(--accent-dark);
+  background: #e2e7ee;
 }
 
 .composer button:disabled {
@@ -290,7 +444,8 @@ h2 {
 }
 
 .tracePanel {
-  min-height: 680px;
+  height: calc(100dvh - 124px);
+  min-height: min(560px, calc(100dvh - 124px));
   overflow: hidden;
 }
 
@@ -322,7 +477,7 @@ h2 {
   flex-direction: column;
   gap: 12px;
   padding: 18px;
-  max-height: 592px;
+  max-height: calc(100% - 76px);
   overflow: auto;
 }
 
@@ -374,17 +529,18 @@ pre {
 
 @media (max-width: 860px) {
   .page {
-    padding: 16px;
+    padding: 12px;
   }
 
   .header {
     min-height: auto;
     grid-template-columns: 1fr;
     align-items: start;
+    padding-bottom: 10px;
   }
 
   h1 {
-    font-size: 48px;
+    font-size: 34px;
   }
 
   .workspace {
@@ -393,6 +549,7 @@ pre {
 
   .chatPanel,
   .tracePanel {
+    height: auto;
     min-height: auto;
   }
 

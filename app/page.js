@@ -1,24 +1,133 @@
 "use client";
 
-import { useState } from "react";
+import Image from "next/image";
+import ReactMarkdown from "react-markdown";
+import { useEffect, useRef, useState } from "react";
 
 const examples = [
-  "我今晚吃红烧肉，配什么菜和饮料？",
-  "我想吃火锅",
-  "今天吃沙拉，怎么搭配？"
+  "给我推荐一顿晚餐",
+  "看看第一个菜谱详情",
+  "推荐一杯 margarita"
 ];
 
+function ThinkingIndicator({ text = "思考中..." }) {
+  return (
+    <span className="thinking">
+      {text}
+      <span className="thinkingDots" aria-hidden="true" />
+    </span>
+  );
+}
+
+function MarkdownMessage({ content }) {
+  return (
+    <div className="markdown">
+      <ReactMarkdown>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+function ResultCards({ cards, onImageLoad }) {
+  if (!cards?.length) return null;
+
+  return (
+    <div className={`cards ${cards.length === 1 ? "cardsSingle" : ""}`}>
+      {cards.map((card) => (
+        <article className="resultCard" key={`${card.type}-${card.id}`}>
+          {card.image && (
+            <div className="resultImage">
+              <Image
+                src={card.image}
+                alt={`${card.title} 的${card.type === "meal" ? "菜谱" : "饮品"}封面图`}
+                width={420}
+                height={264}
+                unoptimized
+                onLoad={onImageLoad}
+              />
+            </div>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeText(text) {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function getCardsMentionedInAnswer(items, answer) {
+  const normalizedAnswer = normalizeText(answer);
+  const matched = items.filter((card) => normalizedAnswer.includes(normalizeText(card.title)));
+
+  return matched.length > 0 ? matched : items;
+}
+
 export default function Home() {
+  const messagesRef = useRef(null);
+  const bottomRef = useRef(null);
+  const stickToBottomRef = useRef(true);
+  const autoFollowRef = useRef(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "告诉我你想吃什么主菜，我会调用工具给你配菜和饮料。"
+      content: "告诉我想吃什么，我会搜索真实菜谱和饮品搭配。"
     }
   ]);
   const [traces, setTraces] = useState([]);
+  const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showScrollButton, setShowScrollButton] = useState(false);
+
+  function scrollToLatest(behavior = "smooth") {
+    stickToBottomRef.current = true;
+    autoFollowRef.current = true;
+    setShowScrollButton(false);
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }
+
+  function scheduleScrollToLatest(behavior = "auto") {
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+    });
+  }
+
+  function handleResultImageLoad() {
+    if (autoFollowRef.current || stickToBottomRef.current) {
+      scheduleScrollToLatest("auto");
+    }
+  }
+
+  function handleMessagesScroll(event) {
+    const element = event.currentTarget;
+    const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const isNearBottom = distanceToBottom < 96;
+
+    stickToBottomRef.current = isNearBottom;
+    if (!isNearBottom) autoFollowRef.current = false;
+    setShowScrollButton(!isNearBottom);
+  }
+
+  useEffect(() => {
+    if (!stickToBottomRef.current && !autoFollowRef.current) return;
+
+    const frame = requestAnimationFrame(() => scheduleScrollToLatest("smooth"));
+    return () => cancelAnimationFrame(frame);
+  }, [messages, loading]);
+
+  function getCardContext(items) {
+    if (items.length === 0) return "";
+
+    return `当前结构化结果：${items
+      .map((card, index) => `${index + 1}. ${card.title} (${card.type}, id: ${card.id})`)
+      .join("；")}`;
+  }
 
   function readSseEvents(buffer, onEvent) {
     const parts = buffer.split("\n\n");
@@ -44,7 +153,22 @@ export default function Home() {
     setError("");
     setLoading(true);
     setTraces([]);
-    setMessages((current) => [...current, { role: "user", content: message }]);
+    setCards([]);
+    stickToBottomRef.current = true;
+    autoFollowRef.current = true;
+    const cardContext = getCardContext(cards);
+    const assistantIndex = messages.length + 1;
+    const visibleMessages = [
+      ...messages,
+      { role: "user", content: message },
+      { role: "assistant", content: "", pending: true }
+    ];
+    const requestMessages = [
+      ...messages,
+      ...(cardContext ? [{ role: "assistant", content: cardContext }] : []),
+      { role: "user", content: message }
+    ];
+    setMessages(visibleMessages);
 
     try {
       const response = await fetch("/api/chat", {
@@ -52,7 +176,9 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({
+          messages: requestMessages.map(({ role, content }) => ({ role, content }))
+        })
       });
 
       if (!response.ok) {
@@ -60,13 +186,32 @@ export default function Home() {
         throw new Error(data.error || "请求失败");
       }
 
-      const assistantIndex = messages.length + 1;
-      setMessages((current) => [...current, { role: "assistant", content: "" }]);
-
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let streamError = "";
+      let pendingCards = [];
+      let outputQueue = Promise.resolve();
+      let assistantText = "";
+
+      function appendDelta(assistantIndex, delta) {
+        outputQueue = outputQueue.then(async () => {
+          for (const char of Array.from(delta)) {
+            assistantText += char;
+            setMessages((current) =>
+              current.map((item, index) =>
+                index === assistantIndex
+                  ? { ...item, content: `${item.content}${char}`, pending: false }
+                  : item
+              )
+            );
+            if (autoFollowRef.current) {
+              scheduleScrollToLatest("auto");
+            }
+            await sleep(12);
+          }
+        });
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -78,14 +223,14 @@ export default function Home() {
             setTraces((current) => [...current, data]);
           }
 
+          if (event === "cards") {
+            const seen = new Set(pendingCards.map((card) => `${card.type}-${card.id}`));
+            const incoming = data.cards.filter((card) => !seen.has(`${card.type}-${card.id}`));
+            pendingCards = [...pendingCards, ...incoming];
+          }
+
           if (event === "delta") {
-            setMessages((current) =>
-              current.map((item, index) =>
-                index === assistantIndex
-                  ? { ...item, content: `${item.content}${data.delta}` }
-                  : item
-              )
-            );
+            appendDelta(assistantIndex, data.delta);
           }
 
           if (event === "error") {
@@ -97,9 +242,43 @@ export default function Home() {
           throw new Error(streamError);
         }
       }
+
+      await outputQueue;
+
+      if (!assistantText) {
+        setMessages((current) =>
+          current.map((item, index) =>
+            index === assistantIndex ? { ...item, content: "没有生成有效内容。", pending: false } : item
+          )
+        );
+      }
+
+      if (pendingCards.length > 0) {
+        const visibleCards = getCardsMentionedInAnswer(pendingCards, assistantText);
+        setCards(visibleCards);
+        setMessages((current) =>
+          current.map((item, index) =>
+            index === assistantIndex
+              ? {
+                  ...item,
+                  cards: visibleCards
+                }
+              : item
+          )
+        );
+        if (autoFollowRef.current) scheduleScrollToLatest("smooth");
+      }
     } catch (err) {
       setError(err.message);
+      setMessages((current) =>
+        current.map((item, index) =>
+          index === assistantIndex && item.pending
+            ? { ...item, content: "请求失败，请稍后重试。", pending: false }
+            : item
+        )
+      );
     } finally {
+      autoFollowRef.current = false;
       setLoading(false);
     }
   }
@@ -115,11 +294,6 @@ export default function Home() {
         <div className="header">
           <div>
             <h1>美食搭配小助手</h1>
-            <p className="subtitle">真实模型驱动的菜品搭配 Agent，展示工具调用全过程。</p>
-          </div>
-          <div className="model">
-            <span />
-            OpenAI + Tools
           </div>
         </div>
 
@@ -129,22 +303,24 @@ export default function Home() {
               <h2>菜品搭配</h2>
             </div>
 
-            <div className="messages">
+            <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
               {messages.map((message, index) => (
                 <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                  <p>
-                    {message.content}
-                    {loading && index === messages.length - 1 && message.role === "assistant" && (
-                      <span className="cursor" />
-                    )}
-                  </p>
+                  {message.pending ? <ThinkingIndicator /> : <MarkdownMessage content={message.content} />}
+                  <ResultCards cards={message.cards} onImageLoad={handleResultImageLoad} />
                 </div>
               ))}
-              {loading && messages[messages.length - 1]?.role !== "assistant" && (
-                <div className="message assistant">
-                  <p>正在分析菜品并调用工具...</p>
-                </div>
+              {showScrollButton && (
+                <button
+                  aria-label="回到最新消息"
+                  className="scrollLatest"
+                  type="button"
+                  onClick={() => scrollToLatest()}
+                >
+                  ↓
+                </button>
               )}
+              <div ref={bottomRef} />
             </div>
 
             {error && <div className="error">{error}</div>}
@@ -171,7 +347,6 @@ export default function Home() {
 
           <aside className="tracePanel">
             <div className="traceHeader">
-              <span className="label">Tool Trace</span>
               <h2>执行轨迹</h2>
             </div>
 

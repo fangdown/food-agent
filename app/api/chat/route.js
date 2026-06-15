@@ -20,9 +20,12 @@ function getSafeErrorMessage(error) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const message = body?.message?.trim();
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const fallbackMessage = body?.message?.trim();
+    const inputMessages = messages.length > 0 ? messages : [{ role: "user", content: fallbackMessage }];
+    const latestMessage = inputMessages.at(-1)?.content?.trim();
 
-    if (!message) {
+    if (!latestMessage) {
       return NextResponse.json({ error: "请输入内容" }, { status: 400 });
     }
 
@@ -35,7 +38,8 @@ export async function POST(request) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          await runEatAgentStream(message, {
+          await runEatAgentStream(inputMessages, {
+            onCards: (cards) => send(controller, "cards", { cards }),
             onTrace: (trace) => send(controller, "trace", trace),
             onDelta: (delta) => send(controller, "delta", { delta }),
             onDone: () => send(controller, "done", {})
